@@ -1,165 +1,494 @@
-# insta-boards
+# insta-sync-boards
 
-Local sync of **Instagram Saved Collections** into the filesystem.
-Built on top of [`instagrapi`](https://github.com/subzeroid/instagrapi) with
-cursor-based pagination, incremental resume and human-like throttling.
+> Local sync of **Instagram Saved Collections** into the filesystem.
+> Built on top of [`instagrapi`](https://github.com/subzeroid/instagrapi) with
+> cursor-based pagination, incremental resume and human-like throttling.
 
-***
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](#requirements)
+[![License](https://img.shields.io/badge/license-TBD-lightgrey.svg)](#license)
+[![instagrapi](https://img.shields.io/badge/instagrapi-2.9.10-orange.svg)](https://github.com/subzeroid/instagrapi)
+[![Repo](https://img.shields.io/badge/repo-nimblemo%2Finsta--boards-blueviolet.svg)](https://github.com/nimblemo/insta-boards)
+
+`insta-sync-boards` is a small, opinionated CLI for backing up every
+**Saved Collection** of an Instagram account into a plain, human-readable
+on-disk layout. It walks the official mobile API via `instagrapi`,
+downloads each media item (single image, video, or carousel) and keeps an
+incremental state file so re-runs only pick up new items.
+
+The default output is a flat `data/raw/<slug>/` tree, where `<slug>` is
+the transliterated collection name, and a JSON state file under
+`data/state/instagram_sync.json` that tracks cursors, fetched items and
+last-sync timestamps.
+
+---
+
+## Highlights
+
+- **Full + incremental sync** of every Saved Collection (state-aware, JSON-on-disk, no DB).
+- **Cursor-based pagination** that survives restarts and partial failures.
+- **Human-like throttling**: log-normal delays, periodic micro- and session-breaks, optional User-Agent rotation.
+- **Parallel carousel downloads** with a bounded thread pool that still respects the pacer.
+- **Resilient HTTP layer**: shared `requests.Session` with `urllib3.Retry` for `connect`/`read`/`status` errors.
+- **Idempotent re-runs**: per-item metadata + content-addressed files make `--resume` safe to interrupt.
+- **Four orthogonal commands** — `sync-instagram`, `list-collections`, `list-items`, `download-collection` — for full sync, inspection, and per-collection download.
+- **Pure stdlib + `uvx`**: no global install, runs anywhere Python 3.11+ is available.
+
+---
+
+## Table of contents
+
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [Commands](#commands)
+- [Configuration](#configuration)
+  - [Authentication](#authentication)
+  - [Network & HTTP retries](#network--http-retries)
+  - [Parallel downloads](#parallel-downloads)
+  - [Humanizer](#humanizer)
+- [Output structure](#output-structure)
+- [How it works](#how-it-works)
+- [Project layout](#project-layout)
+- [Troubleshooting](#troubleshooting)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [License](#license)
+- [Acknowledgments](#acknowledgments)
+
+---
+
+## Requirements
+
+- **Python** ≥ 3.11
+- **`uv`** / **`uvx`** for the recommended one-shot install
+  ([install guide](https://docs.astral.sh/uv/getting-started/installation/))
+- A working **Instagram** account (credentials, `sessionid` cookie, or
+  pre-saved `instagrapi` settings — see [Authentication](#authentication))
+- Outbound HTTPS to `i.instagram.com`, `scontent-*.cdninstagram.com` and
+  the API endpoints used by `instagrapi`
+
+The project is **Windows / macOS / Linux** friendly; the on-disk layout
+uses forward slashes for cross-platform reproducibility.
+
+---
+
+## Installation
+
+The recommended way is to run the CLI from a local checkout using `uvx`,
+which creates a temporary, isolated environment and does not pollute the
+global Python.
+
+```bash
+# From the repository root
+uvx --from . sync-instagram --dry-run
+```
+
+To install the project as a long-lived tool, use `uv tool`:
+
+```bash
+uv tool install .                # installs sync-instagram / list-collections / ...
+sync-instagram --dry-run         # available globally
+```
+
+For development, install in editable mode with all extras:
+
+```bash
+git clone https://github.com/nimblemo/insta-boards.git
+cd insta-boards
+uv sync                          # creates .venv with all dependencies
+uv run sync-instagram --dry-run
+```
+
+---
 
 ## Quick start
 
+1. **Clone and configure credentials.** Create a `.env` file in the repo
+   root (see [Configuration](#configuration) for the full list).
+
+   The most reliable way to authenticate is via a browser `sessionid`
+   cookie — log into [instagram.com](https://www.instagram.com/) in your
+   browser, open DevTools → Application → Cookies → `https://www.instagram.com`
+   and copy the value of the `sessionid` cookie. The password-only flow
+   often fails for accounts that were created through Facebook or have
+   2FA enabled.
+
+   ```dotenv
+   IG_USERNAME=your_login
+   IG_PASSWORD=your_password
+   IG_SESSIONID=your_sessionid_cookie_from_browser
+   ```
+
+2. **Preview the plan** (no API writes, no downloads):
+
+   ```bash
+   uvx --from . sync-instagram --dry-run
+   ```
+
+3. **Run the full sync.** State, cursors and downloaded files are
+   written under `data/`:
+
+   ```bash
+   uvx --from . sync-instagram
+   ```
+
+4. **Re-run any time** — only new items are downloaded; the state file
+   short-circuits items already known.
+
+---
+
+## Commands
+
+The package exposes four entry points, all defined in `pyproject.toml`:
+
+| Command               | Purpose                                                |
+| --------------------- | ------------------------------------------------------ |
+| `sync-instagram`      | Full sync of all collections (state-aware, resumable). |
+| `list-collections`    | JSONL of all collections (id, name, type, count).      |
+| `list-items`          | JSONL of items in a single collection.                 |
+| `download-collection` | Download a single collection into `data/raw/<slug>/`.  |
+
+### `sync-instagram` — full sync
+
 ```bash
+# Default: every collection on the account, resumes new items only
 uvx --from . sync-instagram
-```
 
-### CLI commands
+# Plan only, no API/state writes
+uvx --from . sync-instagram --dry-run
 
-| Command               | Purpose                                              |
-| --------------------- | ---------------------------------------------------- |
-| `sync-instagram`      | Full sync of all collections (state-aware)           |
-| `list-collections`    | JSONL of all collections (id, name, type, count)     |
-| `list-items`          | JSONL of items in a single collection                |
-| `download-collection` | Download a single collection into `data/raw/<slug>/` |
-
-***
-
-## Usage examples
-
-```bash
-# === Full sync (default) ===
-uvx --from . sync-instagram                               # all collections, resumes new ones
-uvx --from . sync-instagram --dry-run                     # plan only, no API/state writes
-
-# === Filtering collections (--collection / --collection-file) ===
+# Restrict to a known set of collections
 uvx --from . sync-instagram --collection 18427410172124759
-uvx --from . sync-instagram --collection 18427410172124759,18143529535276037
+uvx --from . sync-instagram --collection 111,222
 uvx --from . sync-instagram --collection 111 --collection 222
 uvx --from . sync-instagram --collection-file sync-collection-list.txt
 
-# sync-collection-list.txt format: one ID per line
-# (or comma-separated); lines starting with `#` are comments:
-#   18143529535276037
-#   18427410172124759,17974021309692829   # comma-separated works too
-#   17885180684721115
-#   18040747580635287
-#   17953107941571440
-#   27452983781048115
-#   2458445887976375
-
-# === Resetting progress ===
-uvx --from . sync-instagram --reset                       # cursor/done for ALL collections
+# Reset progress (keep the items, drop the cursor)
+uvx --from . sync-instagram --reset
 uvx --from . sync-instagram --reset-collection 18427410172124759
 
-# === Inspection: list collections ===
-uvx --from . list-collections
-uvx --from . list-collections --limit 50
+# Concurrency and humanizer toggles
+uvx --from . sync-instagram --concurrency 3
+uvx --from . sync-instagram --no-humanize
 
-# === Inspection: items of one collection ===
-uvx --from . list-items --collection 18427410172124759
-uvx --from . list-items --collection 18427410172124759 --limit 20
-uvx --from . list-items --collection 18427410172124759 \
-    --max-id "QV9fX0ZBS0VfQ1VSU09S" \
-    --output-cursor .state/list-items.cursor.json
-
-# === Download a single collection ===
-uvx --from . download-collection --collection 18427410172124759
-uvx --from . download-collection --collection 18427410172124759 --resume
-uvx --from . download-collection --collection 18427410172124759 \
-    --max-id "QV9fX0ZBS0VfQ1VSU09S" \
-    --output-cursor .state/dwl.cursor.json --resume
-uvx --from . download-collection --collection 18427410172124759 --name "Furniture"
-
-# === Parallel downloads and human-like mode ===
-uvx --from . sync-instagram --concurrency 3               # 3 carousel files in parallel
-uvx --from . sync-instagram --no-humanize                 # flat pauses (CI/tests)
-
-# === Reporting and debugging ===
+# Reporting and debugging
 uvx --from . sync-instagram --report-json logs/sync-report.json
 uvx --from . sync-instagram --print-state
 ```
 
-<br />
+Format of `sync-collection-list.txt` (one ID per line, comma-separated is
+also accepted, lines starting with `#` are comments).
 
-### Filtering collections: `--collection` / `--collection-file`
+> **Default location.** When a `sync-collection-list.txt` file is present
+> in the repository root, `sync-instagram` automatically uses it as the
+> collection filter — you do not need to pass `--collection-file`
+> explicitly. If neither `--collection`, `--collection-file` nor this
+> default file is provided, the sync walks **all** collections on the
+> account.
 
-**Three forms** are supported — they are merged into a single deduplicated list:
+```text
+# favorites
+18143529535276037
+18427410172124759,17974021309692829
+17885180684721115
+18040747580635287
+17953107941571440
+27452983781048115
+2458445887976375
+```
 
-| Form                  | Example                                      |
-| --------------------- | -------------------------------------------- |
-| One collection        | `--collection 18427410172124759`             |
-| Comma-separated list  | `--collection 111,222,333`                   |
-| Repeat `--collection` | `--collection 111 --collection 222`          |
-| File with a list      | `--collection-file sync-collection-list.txt` |
+### `list-collections` — inspect the account
 
-***
+```bash
+uvx --from . list-collections           # walks every collection via cursor
+uvx --from . list-collections --limit 50
+```
 
-## Configuration via `.env`
+### `list-items` — inspect one collection
 
-<br />
+```bash
+# Full walk
+uvx --from . list-items --collection 18427410172124759
 
-| Variable           | Purpose                                                                                |
-| ------------------ | -------------------------------------------------------------------------------------- |
-| `IG_USERNAME`      | login (when no saved session is present)                                               |
-| `IG_PASSWORD`      | password                                                                               |
-| `IG_2FA_CODE`      | one-time TOTP code (if Instagram requires 2FA)                                         |
-| `IG_SESSIONID`     | `sessionid` cookie from web Instagram (alternative for "Login with Facebook" accounts) |
-| `IG_PROXY`         | proxy (`http://user:pass@host:port` or `socks5://host:port`)                           |
-| `IG_SETTINGS_PATH` | path to the instagrapi session file. Default `<repo>/secrets/instagrapi.settings.json` |
-| `IG_STATE_PATH`    | path to the JSON state file. Default `<repo>/data/state/instagram_sync.json`           |
+# Cap the number of items
+uvx --from . list-items --collection 18427410172124759 --limit 20
 
-### Network and retries (HTTP)
+# Resume from a previously-saved cursor
+uvx --from . list-items --collection 18427410172124759 \
+    --max-id "QV9fX0ZBS0VfQ1VSU09S" \
+    --output-cursor .state/list-items.cursor.json
+```
 
-| Variable              | Purpose                                                                    | Default |
-| --------------------- | -------------------------------------------------------------------------- | ------- |
-| `IG_DOWNLOAD_TIMEOUT` | per-request HTTP timeout in seconds                                        | `120`   |
-| `IG_DOWNLOAD_RETRIES` | how many times to retry `connect`/`read`/`status`                          | `5`     |
-| `IG_DOWNLOAD_BACKOFF` | exponential backoff multiplier between retries (`backoff * 2**n`)          | `0.5`   |
-| `IG_DOWNLOAD_DELAY`   | base pause between SUCCESSFUL downloads (sec) — median of human-like curve | `1.0`   |
+### `download-collection` — download one collection
 
-&#x20;
+```bash
+# Plain download of a single collection
+uvx --from . download-collection --collection 18427410172124759
 
-### Parallel downloads (concurrency)
+# Incremental: skip items that already have <pk>.json on disk
+uvx --from . download-collection --collection 18427410172124759 --resume
 
-| Variable                  | Purpose                                         | Default |
-| ------------------------- | ----------------------------------------------- | ------- |
-| `IG_DOWNLOAD_CONCURRENCY` | max simultaneous downloads inside a single item | `1`     |
-| `IG_DOWNLOAD_POOL_REUSE`  | reuse the singleton pool across calls (`1`/`0`) | `1`     |
+# Resume from a saved cursor
+uvx --from . download-collection --collection 18427410172124759 \
+    --max-id "QV9fX0ZBS0VfQ1VSU09S" \
+    --output-cursor .state/dwl.cursor.json --resume
 
-**Humanizer**
+# Override the directory name explicitly
+uvx --from . download-collection --collection 18427410172124759 --name "Furniture"
+```
 
-| Variable                    | Purpose                                        | Default |
-| --------------------------- | ---------------------------------------------- | ------- |
-| `IG_HUMANIZE`               | enable/disable human-like simulation (`1`/`0`) | `1`     |
-| `IG_DOWNLOAD_DELAY`         | base (median) pause between requests (sec)     | `1.0`   |
-| `IG_HUMANIZE_SIGMA`         | sigma of the log-normal distribution           | `0.55`  |
-| `IG_HUMANIZE_MIN`           | minimum pause (sec)                            | `0.4`   |
-| `IG_HUMANIZE_MAX`           | maximum pause (sec)                            | `8.0`   |
-| `IG_HUMANIZE_MICRO_EVERY`   | how often to insert a micro-break (requests)   | `12`    |
-| `IG_HUMANIZE_MICRO_MIN`     | minimum micro-break (sec)                      | `2.5`   |
-| `IG_HUMANIZE_MICRO_MAX`     | maximum micro-break (sec)                      | `6.0`   |
-| `IG_HUMANIZE_SESSION_EVERY` | how often to insert a session break (requests) | `80`    |
-| `IG_HUMANIZE_SESSION_MIN`   | minimum session break (sec)                    | `15.0`  |
-| `IG_HUMANIZE_SESSION_MAX`   | maximum session break (sec)                    | `45.0`  |
-| `IG_USER_AGENT_ROTATE`      | enable/disable User-Agent rotation (`1`/`0`)   | `0`     |
+---
 
-***
+## Configuration
 
-## Authentication rules
+All configuration is read from environment variables (and optionally a
+`.env` file in the repo root, or the current working directory). Variables
+not set fall back to safe defaults.
 
-The scripts follow this login order:
+### Authentication
+
+| Variable           | Purpose                                                                                | Default                         |
+| ------------------ | -------------------------------------------------------------------------------------- | ------------------------------- |
+| `IG_USERNAME`      | Login (when no saved session is present).                                              | —                               |
+| `IG_PASSWORD`      | Password.                                                                              | —                               |
+| `IG_2FA_CODE`      | One-time TOTP code (if Instagram requires 2FA).                                        | —                               |
+| `IG_SESSIONID`     | `sessionid` cookie from web Instagram (alternative for "Log in with Facebook" accounts). | —                            |
+| `IG_PROXY`         | Proxy URL (`http://user:pass@host:port` or `socks5://host:port`).                      | —                               |
+| `IG_SETTINGS_PATH` | Path to the `instagrapi` session file.                                                 | `<repo>/secrets/instagrapi.settings.json` |
+| `IG_STATE_PATH`    | Path to the JSON sync state file.                                                      | `<repo>/data/state/instagram_sync.json`   |
+
+**Login order.** The CLIs follow this precedence at startup:
 
 1. If `IG_SETTINGS_PATH` exists — load the saved session.
 2. If `IG_SESSIONID` is set — `login_by_sessionid()`, then save settings.
-3. If `IG_USERNAME`/`IG_PASSWORD` are set:
+3. If `IG_USERNAME` / `IG_PASSWORD` are set:
    - with `IG_2FA_CODE` set — `login(..., verification_code=…)`,
    - otherwise plain `login()`,
    - then save settings.
 4. If nothing is set — try the loaded session, otherwise a `LoginRequired` error is raised.
 
-**Common issues:**
+### Network & HTTP retries
 
-- "You can log in with your linked Facebook account" → use
-  `IG_SESSIONID` (the `sessionid` web cookie) or set a separate IG
-  password, or rotate the IP via `IG_PROXY`.
-- 2FA → set `IG_2FA_CODE` (TOTP from your Authenticator) and re-run.
+| Variable              | Purpose                                                       | Default |
+| --------------------- | ------------------------------------------------------------- | ------- |
+| `IG_DOWNLOAD_TIMEOUT` | Per-request HTTP timeout in seconds.                          | `120`   |
+| `IG_DOWNLOAD_RETRIES` | How many times to retry `connect` / `read` / `status`.        | `5`     |
+| `IG_DOWNLOAD_BACKOFF` | Exponential backoff multiplier between retries (`backoff * 2**n`). | `0.5` |
+| `IG_DOWNLOAD_DELAY`   | Base pause between **successful** downloads (sec) — median of the human-like curve. | `1.0` |
 
+### Parallel downloads
+
+| Variable                  | Purpose                                          | Default |
+| ------------------------- | ------------------------------------------------ | ------- |
+| `IG_DOWNLOAD_CONCURRENCY` | Max simultaneous downloads inside a single item. | `1`     |
+| `IG_DOWNLOAD_POOL_REUSE`  | Reuse the singleton pool across calls (`1` / `0`). | `1`   |
+
+### Humanizer
+
+| Variable                    | Purpose                                          | Default |
+| --------------------------- | ------------------------------------------------ | ------- |
+| `IG_HUMANIZE`               | Enable / disable human-like simulation (`1` / `0`). | `1`  |
+| `IG_HUMANIZE_SIGMA`         | Sigma of the log-normal pause distribution.      | `0.55`  |
+| `IG_HUMANIZE_MIN`           | Minimum pause (sec).                             | `0.4`   |
+| `IG_HUMANIZE_MAX`           | Maximum pause (sec).                             | `8.0`   |
+| `IG_HUMANIZE_MICRO_EVERY`   | Insert a micro-break every N requests.           | `12`    |
+| `IG_HUMANIZE_MICRO_MIN`     | Minimum micro-break (sec).                       | `2.5`   |
+| `IG_HUMANIZE_MICRO_MAX`     | Maximum micro-break (sec).                       | `6.0`   |
+| `IG_HUMANIZE_SESSION_EVERY` | Insert a session break every N requests.         | `80`    |
+| `IG_HUMANIZE_SESSION_MIN`   | Minimum session break (sec).                     | `15.0`  |
+| `IG_HUMANIZE_SESSION_MAX`   | Maximum session break (sec).                     | `45.0`  |
+| `IG_USER_AGENT_ROTATE`      | Enable / disable User-Agent rotation (`1` / `0`). | `0`    |
+
+---
+
+## Output structure
+
+By default, the sync writes into the `data/` tree next to the repository
+root. Slugs are produced by transliterating the original collection name
+to ASCII (e.g. `Furniture` → `furniture`, `Textures: for home` →
+`textures-for-home`).
+
+```text
+data/
+├── raw/
+│   └── <slug>/
+│       ├── metadata.json          # collection index (fetched_at, items[])
+│       ├── <pk>.json              # per-item metadata
+│       └── <pk>_<idx>.<ext>       # media files (jpg, mp4, …) per carousel index
+└── state/
+    └── instagram_sync.json        # global sync state, one record per collection
+```
+
+`metadata.json` (one per collection) is written by `download-collection`
+and contains the `fetched_at` timestamp plus a flat list of items:
+
+```json
+{
+  "source": "instagram",
+  "fetched_at": "2026-08-27T19:42:01Z",
+  "items": [
+    { "item_id": "3234567890123456789", "source_url": "https://www.instagram.com/p/CxYzAbC/", "taken_at": 1693152121 }
+  ]
+}
+```
+
+`<pk>.json` holds the normalised per-item record (collection id, source
+url, taken_at, fetched_at, media entries with type / url / index). See
+`src.instagram_sync.media_entries` and `src.cli.list_items.normalize_media`
+for the exact schema.
+
+`instagram_sync.json` is the global sync state used by `sync-instagram`:
+per-collection cursor, `done` flag, `last_synced_at`, and the dictionary
+of known items. State is written **after every item** so a network drop
+mid-run never loses progress.
+
+---
+
+## How it works
+
+```
+┌──────────────┐     ┌────────────────┐     ┌──────────────┐
+│ instagrapi   │ ──▶ │ Collection-    │ ──▶ │ DownloadPool │ ──▶ data/raw/<slug>/
+│ Client (API) │     │ MediasPager    │     │ + Pacer      │
+└──────────────┘     └────────────────┘     └──────────────┘
+       │                     │                      │
+       ▼                     ▼                      ▼
+ instagrapi.Session   SyncState (JSON)     requests.Session + Retry
+                      ← persisted after
+                        every successful
+                        item
+```
+
+- **`instagrapi.Client`** — handles login, 2FA, proxy and `sessionid`
+  fallback. The session is dumped to `secrets/instagrapi.settings.json`
+  on success so subsequent runs skip authentication.
+- **`CollectionMediasPager`** — a small iterator that walks the cursor
+  API (`more_available` / `next_max_id`) for one collection, yielding
+  `Media` objects lazily and remembering `last_max_id` for resume.
+- **`SyncState`** — a single JSON file under `data/state/`. The
+  orchestrator reads the cursor and known items at start, calls the
+  pager, and persists state after every successful item download.
+- **`SessionPacer` (Humanizer)** — log-normal pause distribution with
+  micro- and session-breaks. Thread-safe; consulted by every download.
+- **`DownloadPool`** — bounded `ThreadPoolExecutor` for parallel
+  carousel downloads. Every worker still goes through the pacer.
+
+See [`src/humanizer.py`](src/humanizer.py) and
+[`src/parallel.py`](src/parallel.py) for the design notes.
+
+---
+
+## Project layout
+
+```text
+.
+├── pyproject.toml
+├── README.md
+└── src/
+    ├── __init__.py
+    ├── client.py            # auth, env loading, User-Agent rotation
+    ├── humanizer.py         # SessionPacer + HumanizerConfig
+    ├── instagram_sync.py    # state, pagers, HTTP session, raw layout
+    ├── naming.py            # slug helpers
+    ├── pagination.py        # iter_collections, CollectionMediasPager
+    ├── parallel.py          # DownloadPool (bounded thread pool)
+    ├── paths.py             # repo-root resolution
+    └── cli/
+        ├── download_collection.py
+        ├── list_collections.py
+        ├── list_items.py
+        └── sync_instagram.py
+```
+
+Runtime artefacts created at first run:
+
+```text
+secrets/
+└── instagrapi.settings.json
+logs/                            # only if --report-json is set
+.state/                          # only if --output-cursor is set
+data/
+├── raw/<slug>/...
+└── state/instagram_sync.json
+```
+
+---
+
+## Troubleshooting
+
+**"You can log in with your linked Facebook account"**
+The password is not accepted because the account was created via
+Facebook. Set `IG_SESSIONID` (the `sessionid` cookie from web
+Instagram), set a separate IG password, or rotate the IP via `IG_PROXY`.
+
+**2FA is requested at every run**
+Set `IG_2FA_CODE` to the current TOTP from your Authenticator app and
+re-run. The session is persisted to `secrets/instagrapi.settings.json`,
+so subsequent runs should not ask for 2FA.
+
+**`ProxyAddressIsBlocked` / `LoginRequired`**
+Instagram flagged the current IP. Switch to a clean residential proxy
+via `IG_PROXY` and re-run.
+
+**A download stalls mid-collection**
+The run can be safely interrupted (`Ctrl-C`) and resumed. Re-run the
+same command — the state file already short-circuits all completed
+items. If the cursor is stale, use `--reset` or
+`--reset-collection <id>` to start that collection from the beginning.
+
+**`fake-useragent` cannot download its database**
+Rotation falls back to a small bundled pool of current desktop
+User-Agents. Set `IG_USER_AGENT_ROTATE=0` to disable rotation entirely.
+
+**Tests / CI need deterministic timing**
+Pass `--no-humanize` to fall back to flat `IG_DOWNLOAD_DELAY` pauses.
+
+---
+
+## Roadmap
+
+- Pluggable storage backends (S3-compatible, SQLite index) behind
+  the `data/raw/<slug>/` layout.
+- Configurable media-quality policy (highest vs. best per type).
+- A `doctor` subcommand to validate `.env`, session and proxy.
+- Optional `watch` mode: poll the Saved Collections endpoint on a
+  schedule and run an incremental sync.
+- A web UI for browsing the local mirror.
+
+---
+
+## Contributing
+
+Issues and pull requests are welcome. For local development:
+
+```bash
+git clone https://github.com/nimblemo/insta-boards.git
+cd insta-boards
+uv sync
+uv run sync-instagram --dry-run
+```
+
+Please run the existing test suite (if any) and add a focused test for
+new behaviour. Keep changes minimal and respect the existing module
+boundaries (`client`, `humanizer`, `instagram_sync`, `parallel`,
+`pagination`).
+
+---
+
+## License
+
+A `LICENSE` file has not been committed yet. Until one is added, this
+project is **all rights reserved** by the author. If you intend to
+publish a fork, please add a license that matches your distribution
+intent (MIT / Apache-2.0 are common choices for CLI utilities).
+
+---
+
+## Acknowledgments
+
+- [`subzeroid/instagrapi`](https://github.com/subzeroid/instagrapi) —
+  the unofficial Instagram API client that powers every request.
+- [`fake-useragent`](https://pypi.org/project/fake-useragent/) — the
+  optional User-Agent provider used when available.
+- [`uv`](https://github.com/astral-sh/uv) — the package manager used
+  to ship a single `uvx --from .` entry point.
