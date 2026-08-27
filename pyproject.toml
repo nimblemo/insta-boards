@@ -1,0 +1,27 @@
+[project]
+name = "insta-sync-boards"
+version = "0.1.0"
+description = "Instagram Saved Collections → local filesystem sync (instagrapi-based)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "instagrapi==2.9.10",
+    "python-dotenv==1.0.1",
+    "requests>=2.31,<3.0",
+    "python-slugify>=8.0.0,<9.0",
+    "fake-useragent>=1.5.1,<3.0",
+    "tenacity>=8.2.0,<10.0",
+]
+
+[project.scripts]
+sync-instagram = "src.cli.sync_instagram:main"
+list-collections = "src.cli.list_collections:main"
+list-items = "src.cli.list_items:main"
+download-collection = "src.cli.download_collection:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]

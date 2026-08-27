@@ -1,0 +1,52 @@
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE
+.idea/
+*.iml
+.fleet/
+
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# Logs / temp
+*.log
+logs/
+tmp/
+temp/
+.tmp/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets / local data — never commit
+.env
+.env.*
+!.env.example
+secrets/
+data/
+sync-collection-list.txt
+
+# TLS / certs
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Agent runtimes
+.claude/
+.agents/
+.codex/
+.trae/
