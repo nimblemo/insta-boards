@@ -1,6 +1,6 @@
 [project]
 name = "insta-boards"
-version = "0.1.1"
+version = "0.1.2"
 description = "Instagram Saved Collections → local filesystem sync (instagrapi-based)"
 readme = "README.md"
 requires-python = ">=3.11"
