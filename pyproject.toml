@@ -1,5 +1,5 @@
 [project]
-name = "insta-sync-boards"
+name = "insta-boards"
 version = "0.1.0"
 description = "Instagram Saved Collections → local filesystem sync (instagrapi-based)"
 readme = "README.md"

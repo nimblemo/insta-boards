@@ -190,7 +190,7 @@ wheels = [
 ]
 
 [[package]]
-name = "insta-sync-boards"
+name = "insta-boards"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

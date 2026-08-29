@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Target index"
+        required: true
+        type: choice
+        default: pypi
+        options:
+          - pypi
+          - testpypi
+
+jobs:
+  publish:
+    name: Publish to ${{ inputs.target || 'PyPI' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.target || 'pypi' }}
+    permissions:
+      id-token: write  # required for PyPI trusted publishing (OIDC)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: latest
+          enable-cache: true
+
+      - name: Build sdist + wheel
+        run: uv build
+
+      # Smoke test the freshly-built wheel before pushing it to the index.
+      # This catches argparse / entry-point typos that only surface after install.
+      - name: Smoke test the built wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheel=$(ls dist/insta_boards-*.whl | head -n1)
+          echo "Wheel: $wheel"
+          uv tool run --from "$wheel" insta-boards --help >/dev/null
+
+      - name: Publish to TestPyPI
+        if: inputs.target == 'testpypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+      - name: Publish to PyPI
+        if: inputs.target != 'testpypi'
+        uses: pypa/gh-action-pypi-publish@release/v1

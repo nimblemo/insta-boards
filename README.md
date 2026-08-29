@@ -9,7 +9,7 @@
 [![instagrapi](https://img.shields.io/badge/instagrapi-2.9.10-orange.svg)](https://github.com/subzeroid/instagrapi)
 [![Repo](https://img.shields.io/badge/repo-nimblemo%2Finsta--boards-blueviolet.svg)](https://github.com/nimblemo/insta-boards)
 
-`insta-sync-boards` is a small, opinionated CLI for backing up every
+`insta-boards` is a small, opinionated CLI for backing up every
 **Saved Collection** of an Instagram account into a plain, human-readable
 on-disk layout. It walks the official mobile API via `instagrapi`,
 downloads each media item (single image, video, or carousel) and keeps an
