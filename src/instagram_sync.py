@@ -119,8 +119,7 @@ def _throttle() -> None:
 
 # ---------------------------------------------------------------------------
 # Pacer / Pool — single points for human-like throttling and parallel
-# downloads. Imported by the ``sync-instagram`` and ``download-collection``
-# CLIs.
+# downloads. Imported by the ``sync`` and ``download`` subcommands.
 # ---------------------------------------------------------------------------
 
 
@@ -271,7 +270,7 @@ def save_state(path: Path, state: SyncState) -> None:
 # Layout of ``data/raw`` (no intermediate "instagram" directory):
 #
 #   data/raw/<slug>/
-#       metadata.json          # collection index (written by download-collection)
+#       metadata.json          # collection index (written by download)
 #       <pk>.json              # per-item metadata
 #       <pk>_<idx>.<ext>       # media file(s) right in the collection dir
 #
@@ -280,7 +279,7 @@ def save_state(path: Path, state: SyncState) -> None:
 # "Textures: for home" → ``textures-for-home``. All functions in this
 # block take a ready-made slug; slug computation lives in
 # ``sync_collection`` (where the source ``Collection`` is available) or
-# in the CLI wrappers (``download-collection``).
+# in the CLI wrappers (``insta-boards download``).
 
 
 def collection_raw_dir(slug: str) -> Path:

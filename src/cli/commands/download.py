@@ -1,3 +1,5 @@
+"""``insta-boards download <id>`` — download a single collection."""
+
 from __future__ import annotations
 
 import argparse
@@ -10,34 +12,31 @@ from typing import Any
 
 from instagrapi.types import Media
 
+from src.cli._common import (
+    add_concurrency_args,
+    add_pagination_args,
+    add_workdir_arg,
+    default_state_path,
+    log,
+    make_pacer_and_pool,
+)
 from src.client import init_client
 from src.instagram_sync import (
     collection_raw_dir,
-    get_pacer,
-    get_pool,
     item_metadata_path,
     load_state,
     write_item_metadata,
 )
 from src.naming import resolve_collection_name, slugify_collection_name
 from src.pagination import CollectionMediasPager, emit_status
-from src.paths import resolve_from_repo_root
+
+
+PROG = "download"
 
 
 # ---------------------------------------------------------------------------
-# Paths
+# Index helpers (collection-level metadata.json)
 # ---------------------------------------------------------------------------
-
-
-def _repo_root() -> Path:
-    return resolve_from_repo_root()
-
-
-def _default_state_path() -> Path:
-    env = os.getenv("IG_STATE_PATH", "").strip()
-    if env:
-        return Path(env).expanduser().resolve()
-    return resolve_from_repo_root("data", "state", "instagram_sync.json")
 
 
 def collection_index_path(slug: str) -> Path:
@@ -86,7 +85,7 @@ def index_entry_from_item(metadata: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Resolving the slug name of a collection
+# Slug resolution
 # ---------------------------------------------------------------------------
 
 
@@ -103,7 +102,7 @@ def resolve_slug(cl, collection_id: str, explicit_name: str | None) -> tuple[str
         return slugify_collection_name(explicit_name, fallback=collection_id), "cli"
 
     try:
-        state = load_state(_default_state_path())
+        state = load_state(default_state_path())
         col_state = state.collections.get(collection_id)
         if col_state and col_state.name:
             return (
@@ -122,17 +121,7 @@ def resolve_slug(cl, collection_id: str, explicit_name: str | None) -> tuple[str
     return slugify_collection_name(collection_id, fallback=collection_id), "fallback"
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        prog="download-collection",
-        description=(
-            "Download media from an Instagram collection into the raw-project "
-            "layout. By default walks the WHOLE collection via cursor "
-            "pagination; supports --limit, --max-id / --output-cursor and "
-            "--resume for incremental downloads. For a full sync of ALL "
-            "collections, use ``sync-instagram``."
-        ),
-    )
+def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--collection",
         required=True,
@@ -152,32 +141,6 @@ def main() -> int:
         ),
     )
     parser.add_argument(
-        "--limit",
-        type=int,
-        default=None,
-        help=(
-            "Maximum number of items to download in this run. By default no "
-            "limit — all items in the collection are downloaded via cursor pagination."
-        ),
-    )
-    parser.add_argument(
-        "--max-id",
-        dest="max_id",
-        default="",
-        type=str,
-        help=(
-            "Opaque Instagram cursor at which to resume walking (see the "
-            "status of a previous run). Empty string = start from the beginning."
-        ),
-    )
-    parser.add_argument(
-        "--output-cursor",
-        dest="output_cursor",
-        default=None,
-        type=str,
-        help="Path to a file where a JSON status (last_max_id / done) will be written on completion.",
-    )
-    parser.add_argument(
         "--resume",
         action="store_true",
         help=(
@@ -185,36 +148,13 @@ def main() -> int:
             "disk. Useful for incremental downloads of large collections."
         ),
     )
-    parser.add_argument(
-        "--workdir",
-        dest="workdir",
-        default=None,
-        type=str,
-        help=(
-            "Directory to chdir into before running. Useful when the "
-            "script is launched from cron / another environment. By "
-            "default uses the repository root (parent of src/)."
-        ),
-    )
-    parser.add_argument(
-        "--concurrency",
-        dest="concurrency",
-        default=None,
-        type=int,
-        help=(
-            "How many media files inside a single item to download in "
-            "parallel. By default taken from IG_DOWNLOAD_CONCURRENCY "
-            "(1 = sequential)."
-        ),
-    )
-    parser.add_argument(
-        "--no-humanize",
-        dest="no_humanize",
-        action="store_true",
-        help="Disable human-like throttling (flat IG_DOWNLOAD_DELAY pauses).",
-    )
-    args = parser.parse_args()
+    add_pagination_args(parser)
+    add_workdir_arg(parser)
+    add_concurrency_args(parser)
+    parser.set_defaults(_handler=lambda args: run(args, parser))
 
+
+def run(args: Any, _parser: argparse.ArgumentParser) -> int:
     if args.workdir:
         os.chdir(Path(args.workdir).expanduser().resolve())
 
@@ -223,23 +163,14 @@ def main() -> int:
     collection_key: Any = int(collection_id) if collection_id.isdigit() else collection_id
 
     slug, source = resolve_slug(cl, collection_id, args.name)
-    sys.stderr.write(
-        f"[download-collection] collection={collection_id} slug={slug!r} (resolved from {source})\n"
+    log(
+        PROG,
+        f"collection={collection_id} slug={slug!r} (resolved from {source})",
     )
-    sys.stderr.flush()
 
-    # Human-like throttling — singleton. --no-humanize turns it off on
-    # the fly (for CI/tests where timing reproducibility matters).
-    pacer = get_pacer()
-    if args.no_humanize:
-        pacer.set_enabled(False)
-    # If --concurrency is passed — override the env value via a direct
-    # DownloadPool construction (lazy import to keep the top imports clean).
-    pool = get_pool(pacer)
-    if args.concurrency is not None and args.concurrency != pool.max_workers:
-        from src.parallel import DownloadPool  # noqa: WPS433
-
-        pool = DownloadPool(pacer=pacer, max_workers=max(1, int(args.concurrency)))
+    pacer, pool = make_pacer_and_pool(
+        PROG, no_humanize=args.no_humanize, concurrency=args.concurrency
+    )
 
     # Load the existing index if it is there and --resume is set.
     index, existing_fetched_at = load_existing_index(slug) if args.resume else ([], None)
@@ -282,10 +213,10 @@ def main() -> int:
             done=pager.done,
             output_path=args.output_cursor,
         )
-        sys.stderr.write(
-            f"[download-collection] collection={collection_id} slug={slug!r} "
+        log(
+            PROG,
+            f"collection={collection_id} slug={slug!r} "
             f"processed={processed} skipped={skipped} "
-            f"cursor={'<done>' if pager.done else pager.last_max_id!r}\n"
+            f"cursor={'<done>' if pager.done else pager.last_max_id!r}",
         )
-        sys.stderr.flush()
     return 0

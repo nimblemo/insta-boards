@@ -57,7 +57,7 @@ def resolve_collection_name(client: "Client", collection_key: str | int) -> str:
     """Fetch the collection name from Instagram via ``iter_collections``.
 
     Used as a fallback in CLI scenarios where we do not have a
-    ``Collection`` object at hand (e.g. ``download-collection`` takes
+    ``Collection`` object at hand (e.g. ``insta-boards download`` takes
     ``--collection``): if the state file has no name, we walk every
     collection through the same cursor-pager the main sync engine uses.
     Any API failure just returns an empty string — the raw collection

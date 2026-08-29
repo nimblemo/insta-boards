@@ -30,7 +30,7 @@ last-sync timestamps.
 - **Parallel carousel downloads** with a bounded thread pool that still respects the pacer.
 - **Resilient HTTP layer**: shared `requests.Session` with `urllib3.Retry` for `connect`/`read`/`status` errors.
 - **Idempotent re-runs**: per-item metadata + content-addressed files make `--resume` safe to interrupt.
-- **Four orthogonal commands** — `sync-instagram`, `list-collections`, `list-items`, `download-collection` — for full sync, inspection, and per-collection download.
+- **Single CLI with four subcommands** — `sync`, `list boards`, `list items`, `download` — for full sync, inspection, and per-collection download.
 - **Pure stdlib +** **`uvx`**: no global install, runs anywhere Python 3.11+ is available.
 
 ***
@@ -80,14 +80,14 @@ global Python.
 
 ```bash
 # From the repository root
-uvx --from . sync-instagram --dry-run
+uvx --from . insta-boards sync --dry-run
 ```
 
 To install the project as a long-lived tool, use `uv tool`:
 
 ```bash
-uv tool install .                # installs sync-instagram / list-collections / ...
-sync-instagram --dry-run         # available globally
+uv tool install .                # installs the `insta-boards` binary
+insta-boards sync --dry-run      # available globally
 ```
 
 For development, install in editable mode with all extras:
@@ -96,7 +96,7 @@ For development, install in editable mode with all extras:
 git clone https://github.com/nimblemo/insta-boards.git
 cd insta-boards
 uv sync                          # creates .venv with all dependencies
-uv run sync-instagram --dry-run
+uv run insta-boards sync --dry-run
 ```
 
 ***
@@ -119,12 +119,12 @@ uv run sync-instagram --dry-run
    ```
 2. **Preview the plan** (no API writes, no downloads):
    ```bash
-   uvx --from . sync-instagram --dry-run
+   uvx --from . insta-boards sync --dry-run
    ```
 3. **Run the full sync.** State, cursors and downloaded files are
    written under `data/`:
    ```bash
-   uvx --from . sync-instagram
+   uvx --from . insta-boards sync
    ```
 4. **Re-run any time** — only new items are downloaded; the state file
    short-circuits items already known.
@@ -133,52 +133,57 @@ uv run sync-instagram --dry-run
 
 ## Commands
 
-The package exposes four entry points, all defined in `pyproject.toml`:
+The package exposes a single binary — `insta-boards` — with four
+subcommands, all defined in `pyproject.toml` under `[project.scripts]`:
 
-| Command               | Purpose                                                |
-| --------------------- | ------------------------------------------------------ |
-| `sync-instagram`      | Full sync of all collections (state-aware, resumable). |
-| `list-collections`    | JSONL of all collections (id, name, type, count).      |
-| `list-items`          | JSONL of items in a single collection.                 |
-| `download-collection` | Download a single collection into `data/raw/<slug>/`.  |
+| Subcommand                    | Purpose                                                |
+| ----------------------------- | ------------------------------------------------------ |
+| `insta-boards sync`           | Full sync of all collections (state-aware, resumable). |
+| `insta-boards list boards`    | JSONL of all collections (id, name, type, count).      |
+| `insta-boards list items`     | JSONL of items in a single collection.                 |
+| `insta-boards download`       | Download a single collection into `data/raw/<slug>/`.  |
 
-### `sync-instagram` — full sync
+The shape follows the kubectl / gh / aws / uv convention: a single binary
+with verb-first subcommands, so users coming from those tools feel at
+home. `insta-boards --help` lists every subcommand; each one also has
+its own `--help`.
+
+### `sync` — full sync
 
 ```bash
 # Default: every collection on the account, resumes new items only
-uvx --from . sync-instagram
+uvx --from . insta-boards sync
 
 # Plan only, no API/state writes
-uvx --from . sync-instagram --dry-run
+uvx --from . insta-boards sync --dry-run
 
 # Restrict to a known set of collections
-uvx --from . sync-instagram --collection 18427410172124759
-uvx --from . sync-instagram --collection 111,222
-uvx --from . sync-instagram --collection 111 --collection 222
-uvx --from . sync-instagram --collection-file sync-collection-list.txt
+uvx --from . insta-boards sync --collection 18427410172124759
+uvx --from . insta-boards sync --collection 111,222
+uvx --from . insta-boards sync --collection 111 --collection 222
+uvx --from . insta-boards sync --collection-file sync-collection-list.txt
 
 # Reset progress (keep the items, drop the cursor)
-uvx --from . sync-instagram --reset
-uvx --from . sync-instagram --reset-collection 18427410172124759
+uvx --from . insta-boards sync --reset
+uvx --from . insta-boards sync --reset-collection 18427410172124759
 
 # Concurrency and humanizer toggles
-uvx --from . sync-instagram --concurrency 3
-uvx --from . sync-instagram --no-humanize
+uvx --from . insta-boards sync --concurrency 3
+uvx --from . insta-boards sync --no-humanize
 
 # Reporting and debugging
-uvx --from . sync-instagram --report-json logs/sync-report.json
-uvx --from . sync-instagram --print-state
+uvx --from . insta-boards sync --report-json logs/sync-report.json
+uvx --from . insta-boards sync --print-state
 ```
 
 Format of `sync-collection-list.txt` (one ID per line, comma-separated is
 also accepted, lines starting with `#` are comments).
 
 > **Default location.** When a `sync-collection-list.txt` file is present
-> in the repository root, `sync-instagram` automatically uses it as the
-> collection filter — you do not need to pass `--collection-file`
-> explicitly. If neither `--collection`, `--collection-file` nor this
-> default file is provided, the sync walks **all** collections on the
-> account.
+> in the repository root, `sync` automatically uses it as the collection
+> filter — you do not need to pass `--collection-file` explicitly. If
+> neither `--collection`, `--collection-file` nor this default file is
+> provided, the sync walks **all** collections on the account.
 
 ```text
 # favorites
@@ -191,44 +196,44 @@ also accepted, lines starting with `#` are comments).
 2458445887976375
 ```
 
-### `list-collections` — inspect the account
+### `list boards` — inspect the account
 
 ```bash
-uvx --from . list-collections           # walks every collection via cursor
-uvx --from . list-collections --limit 50
+uvx --from . insta-boards list boards           # walks every collection via cursor
+uvx --from . insta-boards list boards --limit 50
 ```
 
-### `list-items` — inspect one collection
+### `list items` — inspect one collection
 
 ```bash
 # Full walk
-uvx --from . list-items --collection 18427410172124759
+uvx --from . insta-boards list items --collection 18427410172124759
 
 # Cap the number of items
-uvx --from . list-items --collection 18427410172124759 --limit 20
+uvx --from . insta-boards list items --collection 18427410172124759 --limit 20
 
 # Resume from a previously-saved cursor
-uvx --from . list-items --collection 18427410172124759 \
+uvx --from . insta-boards list items --collection 18427410172124759 \
     --max-id "QV9fX0ZBS0VfQ1VSU09S" \
-    --output-cursor .state/list-items.cursor.json
+    --output-cursor .state/items.cursor.json
 ```
 
-### `download-collection` — download one collection
+### `download` — download one collection
 
 ```bash
 # Plain download of a single collection
-uvx --from . download-collection --collection 18427410172124759
+uvx --from . insta-boards download --collection 18427410172124759
 
 # Incremental: skip items that already have <pk>.json on disk
-uvx --from . download-collection --collection 18427410172124759 --resume
+uvx --from . insta-boards download --collection 18427410172124759 --resume
 
 # Resume from a saved cursor
-uvx --from . download-collection --collection 18427410172124759 \
+uvx --from . insta-boards download --collection 18427410172124759 \
     --max-id "QV9fX0ZBS0VfQ1VSU09S" \
     --output-cursor .state/dwl.cursor.json --resume
 
 # Override the directory name explicitly
-uvx --from . download-collection --collection 18427410172124759 --name "Furniture"
+uvx --from . insta-boards download --collection 18427410172124759 --name "Furniture"
 ```
 
 ***
@@ -251,7 +256,7 @@ not set fall back to safe defaults.
 | `IG_SETTINGS_PATH` | Path to the `instagrapi` session file.                                                   | `<repo>/secrets/instagrapi.settings.json` |
 | `IG_STATE_PATH`    | Path to the JSON sync state file.                                                        | `<repo>/data/state/instagram_sync.json`   |
 
-**Login order.** The CLIs follow this precedence at startup:
+**Login order.** The CLI follows this precedence at startup:
 
 1. If `IG_SETTINGS_PATH` exists — load the saved session.
 2. If `IG_SESSIONID` is set — `login_by_sessionid()`, then save settings.
@@ -313,7 +318,7 @@ data/
     └── instagram_sync.json        # global sync state, one record per collection
 ```
 
-`metadata.json` (one per collection) is written by `download-collection`
+`metadata.json` (one per collection) is written by `download`
 and contains the `fetched_at` timestamp plus a flat list of items:
 
 ```json
@@ -328,10 +333,11 @@ and contains the `fetched_at` timestamp plus a flat list of items:
 
 `<pk>.json` holds the normalised per-item record (collection id, source
 url, taken\_at, fetched\_at, media entries with type / url / index). See
-`src.instagram_sync.media_entries` and `src.cli.list_items.normalize_media`
+`src.instagram_sync.media_entries` and
+`src.cli.commands.list_items.normalize_media`
 for the exact schema.
 
-`instagram_sync.json` is the global sync state used by `sync-instagram`:
+`instagram_sync.json` is the global sync state used by `insta-boards sync`:
 per-collection cursor, `done` flag, `last_synced_at`, and the dictionary
 of known items. State is written **after every item** so a network drop
 mid-run never loses progress.
@@ -388,10 +394,13 @@ See [`src/humanizer.py`](src/humanizer.py) and
     ├── parallel.py          # DownloadPool (bounded thread pool)
     ├── paths.py             # repo-root resolution
     └── cli/
-        ├── download_collection.py
-        ├── list_collections.py
-        ├── list_items.py
-        └── sync_instagram.py
+        ├── app.py           # single entry point: insta-boards <subcommand>
+        ├── _common.py       # shared argparse groups, pacer/pool setup
+        └── commands/
+            ├── sync.py          # insta-boards sync
+            ├── list_boards.py   # insta-boards list boards
+            ├── list_items.py    # insta-boards list items
+            └── download.py      # insta-boards download
 ```
 
 Runtime artefacts created at first run:
@@ -459,7 +468,7 @@ Issues and pull requests are welcome. For local development:
 git clone https://github.com/nimblemo/insta-boards.git
 cd insta-boards
 uv sync
-uv run sync-instagram --dry-run
+uv run insta-boards sync --dry-run
 ```
 
 Please run the existing test suite (if any) and add a focused test for

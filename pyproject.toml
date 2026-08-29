@@ -14,10 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-sync-instagram = "src.cli.sync_instagram:main"
-list-collections = "src.cli.list_collections:main"
-list-items = "src.cli.list_items:main"
-download-collection = "src.cli.download_collection:main"
+insta-boards = "src.cli.app:main"
 
 [build-system]
 requires = ["hatchling"]

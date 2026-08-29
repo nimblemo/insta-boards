@@ -1,3 +1,5 @@
+"""``insta-boards list items`` — JSONL of items in a single collection."""
+
 from __future__ import annotations
 
 import argparse
@@ -7,8 +9,12 @@ from typing import Any
 
 from instagrapi.types import Media, Resource
 
+from src.cli._common import add_pagination_args, log
 from src.client import dump_jsonl, init_client
 from src.pagination import CollectionMediasPager, emit_status
+
+
+PROG = "list items"
 
 
 def as_utc_iso(dt: datetime | None) -> str | None:
@@ -68,9 +74,10 @@ def normalize_media(media: Media, collection_id: str) -> dict[str, Any]:
     }
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        prog="list-items",
+def add_arguments(sub: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
+    p = sub.add_parser(
+        "items",
+        prog=f"insta-boards {PROG}",
         description=(
             "Print a JSONL description of every item in an Instagram "
             "collection. By default walks the whole collection via cursor "
@@ -78,44 +85,17 @@ def main() -> int:
             "--output-cursor are supported."
         ),
     )
-    parser.add_argument(
+    p.add_argument(
         "--collection",
         required=True,
         type=str,
         help="Collection ID (numeric) or a string sentinel (e.g. ALL_MEDIA_AUTO_COLLECTION).",
     )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        default=None,
-        help=(
-            "Maximum number of items in the output. By default no limit — "
-            "all items in the collection are walked via cursor pagination."
-        ),
-    )
-    parser.add_argument(
-        "--max-id",
-        dest="max_id",
-        default="",
-        type=str,
-        help=(
-            "Opaque Instagram cursor at which to resume walking. Can be "
-            "obtained from the status of a previous run (see stderr / "
-            "--output-cursor). Empty string = start from the beginning."
-        ),
-    )
-    parser.add_argument(
-        "--output-cursor",
-        dest="output_cursor",
-        default=None,
-        type=str,
-        help=(
-            "Path to a file where a JSON status (last_max_id / done) will "
-            "be written on completion (handy for a follow-up --max-id)."
-        ),
-    )
-    args = parser.parse_args()
+    add_pagination_args(p)
+    p.set_defaults(_handler=lambda args: run(args, p))
 
+
+def run(args: Any, _parser: argparse.ArgumentParser) -> int:
     cl, _cfg = init_client()
     collection_id = args.collection.strip()
     collection_key: Any = int(collection_id) if collection_id.isdigit() else collection_id
@@ -125,24 +105,21 @@ def main() -> int:
     try:
         for m in pager:
             if args.limit is not None and emitted >= int(args.limit):
-                # We hit the limit, but we still want to save the cursor
-                # so we can resume. Nothing to do here — the cursor is
-                # already stored in pager.last_max_id (this is the cursor
-                # of the last fully-read chunk).
+                # Hit the limit, but the cursor is already stored in
+                # pager.last_max_id (cursor of the last fully-read chunk).
                 break
             dump_jsonl([normalize_media(m, collection_id)])
             emitted += 1
     finally:
-        # Print the status and optionally write it to a file.
         emit_status(
             last_max_id=pager.last_max_id,
             consumed=pager.consumed,
             done=pager.done,
             output_path=args.output_cursor,
         )
-        sys.stderr.write(
-            f"[list-items] collection={collection_id} processed={emitted} "
-            f"cursor={'<done>' if pager.done else pager.last_max_id!r}\n"
+        log(
+            PROG,
+            f"collection={collection_id} processed={emitted} "
+            f"cursor={'<done>' if pager.done else pager.last_max_id!r}",
         )
-        sys.stderr.flush()
     return 0
