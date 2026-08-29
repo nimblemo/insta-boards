@@ -74,9 +74,17 @@ uses forward slashes for cross-platform reproducibility.
 
 ## Installation
 
-The recommended way is to run the CLI from a local checkout using `uvx`,
-which creates a temporary, isolated environment and does not pollute the
-global Python.
+**From** **[PyPI](https://pypi.org/project/insta-boards/)** (recommended for users):
+
+```bash
+uv tool install insta-boards
+insta-boards --help
+```
+
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/) (or substitute `pipx` / `pip` if you prefer).
+
+For development, run from a local checkout using `uvx`, which creates a
+temporary, isolated environment and does not pollute the global Python:
 
 ```bash
 # From the repository root
@@ -136,12 +144,12 @@ uv run insta-boards sync --dry-run
 The package exposes a single binary — `insta-boards` — with four
 subcommands, all defined in `pyproject.toml` under `[project.scripts]`:
 
-| Subcommand                    | Purpose                                                |
-| ----------------------------- | ------------------------------------------------------ |
-| `insta-boards sync`           | Full sync of all collections (state-aware, resumable). |
-| `insta-boards list boards`    | JSONL of all collections (id, name, type, count).      |
-| `insta-boards list items`     | JSONL of items in a single collection.                 |
-| `insta-boards download`       | Download a single collection into `data/raw/<slug>/`.  |
+| Subcommand                 | Purpose                                                |
+| -------------------------- | ------------------------------------------------------ |
+| `insta-boards sync`        | Full sync of all collections (state-aware, resumable). |
+| `insta-boards list boards` | JSONL of all collections (id, name, type, count).      |
+| `insta-boards list items`  | JSONL of items in a single collection.                 |
+| `insta-boards download`    | Download a single collection into `data/raw/<slug>/`.  |
 
 The shape follows the kubectl / gh / aws / uv convention: a single binary
 with verb-first subcommands, so users coming from those tools feel at
@@ -482,10 +490,10 @@ boundaries (`client`, `humanizer`, `instagram_sync`, `parallel`,
 
 Releases are fully automated via GitHub Actions (`.github/workflows/`):
 
-* **`ci.yml`** — runs on every push to `main` and on every pull request.
+- **`ci.yml`** — runs on every push to `main` and on every pull request.
   Matrix-builds the sdist + wheel on Python 3.11 / 3.12 / 3.13 and
   smoke-tests every subcommand.
-* **`release.yml`** — runs on a published GitHub Release, or manually
+- **`release.yml`** — runs on a published GitHub Release, or manually
   via the *Run workflow* button. Builds the wheel, smoke-tests it, and
   pushes it to PyPI (or TestPyPI if you pick that target) using
   [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/)
@@ -501,7 +509,7 @@ it once, for both indexes:
    - Go to <https://pypi.org/manage/projects/publish/> and reserve the
      name `insta-boards` (or click *publish* manually the first time
      to claim it).
-2. **Register the GitHub Actions workflow as a *trusted publisher***:
+2. **Register the GitHub Actions workflow as a** ***trusted publisher***:
    - On PyPI: <https://pypi.org/manage/account/publishing/> → *Add a
      new pending publisher* with:
      - **Owner**: `nimblemo`
