@@ -31,6 +31,10 @@ venv/
 .mypy_cache/
 .ruff_cache/
 
+# Build artefacts (uv build / hatchling)
+dist/
+build/
+
 # Secrets / local data — never commit
 .env
 .env.*

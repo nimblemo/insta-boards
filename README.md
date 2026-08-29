@@ -5,7 +5,7 @@
 > cursor-based pagination, incremental resume and human-like throttling.
 
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](#requirements)
-[![License](https://img.shields.io/badge/license-TBD-lightgrey.svg)](#license)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![instagrapi](https://img.shields.io/badge/instagrapi-2.9.10-orange.svg)](https://github.com/subzeroid/instagrapi)
 [![Repo](https://img.shields.io/badge/repo-nimblemo%2Finsta--boards-blueviolet.svg)](https://github.com/nimblemo/insta-boards)
 
@@ -478,12 +478,68 @@ boundaries (`client`, `humanizer`, `instagram_sync`, `parallel`,
 
 ***
 
+## Releasing
+
+Releases are fully automated via GitHub Actions (`.github/workflows/`):
+
+* **`ci.yml`** — runs on every push to `main` and on every pull request.
+  Matrix-builds the sdist + wheel on Python 3.11 / 3.12 / 3.13 and
+  smoke-tests every subcommand.
+* **`release.yml`** — runs on a published GitHub Release, or manually
+  via the *Run workflow* button. Builds the wheel, smoke-tests it, and
+  pushes it to PyPI (or TestPyPI if you pick that target) using
+  [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/)
+  (OIDC). **No API tokens are stored in GitHub secrets.**
+
+### One-time setup: register the trusted publisher on PyPI
+
+Trusted Publishing means PyPI trusts a specific GitHub Actions workflow
+to upload on your behalf, so you never have to copy a token. Register
+it once, for both indexes:
+
+1. **Create the project on PyPI** (first release only):
+   - Go to <https://pypi.org/manage/projects/publish/> and reserve the
+     name `insta-boards` (or click *publish* manually the first time
+     to claim it).
+2. **Register the GitHub Actions workflow as a *trusted publisher***:
+   - On PyPI: <https://pypi.org/manage/account/publishing/> → *Add a
+     new pending publisher* with:
+     - **Owner**: `nimblemo`
+     - **Repository**: `insta-boards`
+     - **Workflow filename**: `release.yml`
+     - **Environment name**: `pypi`
+   - Repeat for TestPyPI: <https://test.pypi.org/manage/account/publishing/>
+     with environment name `testpypi`.
+3. **Create the matching environments in GitHub**:
+   - *Settings → Environments → New environment* → name it `pypi` (and
+     `testpypi`). Optional: add protection rules (required reviewers,
+     branch restrictions) so a stray tag cannot publish.
+
+### Cutting a release
+
+1. Bump `version` in `pyproject.toml` (e.g. `0.1.0` → `0.2.0`).
+2. Commit and push: `git commit -am "release: v0.2.0" && git push`.
+3. *GitHub → Releases → Draft a new release* → tag `v0.2.0` against
+   `main` → *Publish release*.
+4. The `Release` workflow picks it up, builds, smoke-tests, and uploads
+   the wheel + sdist to PyPI.
+
+For a dry-run against TestPyPI first, use *Actions → Release → Run
+workflow → target = testpypi*.
+
+### Verifying a release
+
+```bash
+# published wheel — installed in a throw-away venv
+uv tool install insta-boards
+insta-boards --help
+```
+
+***
+
 ## License
 
-A `LICENSE` file has not been committed yet. Until one is added, this
-project is **all rights reserved** by the author. If you intend to
-publish a fork, please add a license that matches your distribution
-intent (MIT / Apache-2.0 are common choices for CLI utilities).
+[MIT](LICENSE) — see the [LICENSE](LICENSE) file for the full text.
 
 ***
 
