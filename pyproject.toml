@@ -16,6 +16,16 @@ dependencies = [
 [project.scripts]
 insta-boards = "src.cli.app:main"
 
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+# Put the repository root on sys.path so ``import src...`` works regardless
+# of how pytest is invoked (the tests live in a ``tests/`` dir without an
+# ``__init__.py``).
+pythonpath = ["."]
+testpaths = ["tests"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

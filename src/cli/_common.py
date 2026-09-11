@@ -135,9 +135,15 @@ def make_pacer_and_pool(
 
     pool = get_pool(pacer)
     if concurrency is not None and concurrency != pool.max_workers:
-        from src.parallel import DownloadPool  # local import — keeps top clean
+        # local import — keeps the top of the module light
+        from src.parallel import DownloadPool, ParallelConfig
 
-        pool = DownloadPool(pacer=pacer, max_workers=max(1, int(concurrency)))
+        cfg = ParallelConfig()
+        pool = DownloadPool(
+            pacer=pacer,
+            max_workers=max(1, int(concurrency)),
+            reuse_pool=cfg.reuse_pool,
+        )
 
     log(
         prog,

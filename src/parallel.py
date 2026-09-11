@@ -160,6 +160,10 @@ class DownloadPool:
         return self._max_workers
 
     @property
+    def reuse_pool(self) -> bool:
+        return self._reuse_pool
+
+    @property
     def pacer(self) -> SessionPacer:
         return self._pacer
 

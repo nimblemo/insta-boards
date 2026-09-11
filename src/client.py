@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 from instagrapi import Client
 from instagrapi.exceptions import BadPassword, LoginRequired, ProxyAddressIsBlocked, TwoFactorRequired
 
@@ -51,16 +51,29 @@ class IgConfig:
 def load_env() -> None:
     """Load environment variables from ``.env`` files in priority order.
 
-    A later file does NOT override values from an earlier one — it only adds
-    missing keys. Sources (highest priority first):
+    A higher-priority file only *adds* keys that are missing (or empty) in the
+    real environment; it never overrides an already-set, non-empty value.
+    Sources (highest priority first):
       1. ``<repo_root>/.env``
       2. ``<cwd>/.env``
+
+    We read each file with ``dotenv_values`` and apply the values manually
+    instead of calling ``load_dotenv`` twice: python-dotenv treats an empty
+    assignment (``KEY=``) as a *present* key, which would let an empty value
+    in a higher-priority file mask a real value in a lower-priority one. Here
+    an empty/whitespace value is treated as "unset", so the lower-priority
+    file (or a real environment variable) can still fill it in.
     """
     repo_env = resolve_from_repo_root(".env")
     cwd_env = Path.cwd().joinpath(".env")
 
-    load_dotenv(repo_env, override=False)
-    load_dotenv(cwd_env, override=False)
+    for env_path in (repo_env, cwd_env):
+        for key, value in dotenv_values(env_path).items():
+            if value is None:
+                continue  # bare ``KEY`` with no value — skip
+            current = os.environ.get(key)
+            if current is None or current.strip() == "":
+                os.environ[key] = value
 
 
 def get_config() -> IgConfig:

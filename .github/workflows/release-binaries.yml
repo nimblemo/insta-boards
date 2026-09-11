@@ -1,0 +1,150 @@
+name: Release Binaries
+
+# Builds the self-bootstrapping cross-platform launchers with uvbox and
+# attaches them to the GitHub Release.
+#
+# uvbox cross-compiles every target (darwin / linux / windows, amd64 + arm64 —
+# six archives) from a single Linux runner, so this whole job fits on
+# `ubuntu-latest`.
+#
+# IMPORTANT: the produced binaries are NOT frozen. On first run they download
+# uv, a Python interpreter and the package into XDG dirs — network access is
+# required the first time. See docs/uvbox-packaging-audit.md.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+# `contents: write` is required to attach assets to a GitHub Release.
+permissions:
+  contents: write
+
+jobs:
+  build-binaries:
+    name: Build uvbox binaries
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: latest
+          enable-cache: true
+
+      # Start from a clean slate so a dirty working copy can never leak stale
+      # artefacts into the release.
+      - name: Clean build directories
+        run: rm -rf dist .wheelhouse
+
+      # Build the wheel into .wheelhouse/ (NOT dist/) so it does not get
+      # mixed into the binary artefacts we upload later from dist/.
+      # ``--wheel`` skips the sdist, which would otherwise sweep the large
+      # data/ tree into a multi-GB tarball we do not need here.
+      - name: Build wheel
+        run: uv build --wheel --out-dir .wheelhouse
+
+      - name: Build binaries with uvbox
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Pipefail-safe glob: an unmatched pattern must not abort the step
+          # before the friendly check below runs.
+          wheels=(.wheelhouse/insta_boards-*.whl)
+          if [ ${#wheels[@]} -ne 1 ] || [ ! -e "${wheels[0]}" ]; then
+            echo "::error::expected exactly one wheel in .wheelhouse/, found ${#wheels[@]}"
+            ls -la .wheelhouse || true
+            exit 1
+          fi
+          wheel="${wheels[0]}"
+          echo "Building uvbox binaries from wheel: $wheel"
+          # Wheel mode: embed a local wheel so CI never depends on PyPI.
+          uvx uvbox wheel --config uvbox.toml "$wheel"
+          echo "--- dist/ ---"
+          ls -la dist
+
+      # The first invocation of the binary bootstraps uv + Python + the
+      # package into XDG dirs, so every call gets a generous timeout.
+      - name: Smoke test the Linux binary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Pipefail-safe glob (see the note in the previous step).
+          tarballs=(dist/*x86_64*linux*.tar.gz)
+          if [ ${#tarballs[@]} -eq 0 ] || [ ! -e "${tarballs[0]}" ]; then
+            echo "::error::no x86_64 Linux tarball found in dist/"
+            ls -la dist
+            exit 1
+          fi
+          tarball="${tarballs[0]}"
+          echo "Smoke-testing: $tarball"
+
+          extract_dir=$(mktemp -d)
+          tar -xzf "$tarball" -C "$extract_dir"
+          # ``-print -quit`` stops at the first hit without SIGPIPE-ing.
+          bin=$(find "$extract_dir" -type f -name insta-boards -print -quit)
+          if [ -z "$bin" ]; then
+            echo "::error::executable 'insta-boards' not found inside the tarball"
+            find "$extract_dir" -type f
+            exit 1
+          fi
+          chmod +x "$bin"
+          echo "Binary: $bin"
+
+          echo "::group::insta-boards --help"
+          help_out=$(timeout 1200 "$bin" --help)
+          echo "$help_out"
+          echo "::endgroup::"
+
+          # Distinctive phrases prove the subcommands are really registered —
+          # a bare word-match on "sync"/"download" would also match the
+          # description text and pass even if the subcommand were removed.
+          for phrase in \
+            "Full sync of all collections" \
+            "Inspect collections or items" \
+            "Download a single collection"; do
+            if ! grep -qF "$phrase" <<<"$help_out"; then
+              echo "::error::top-level --help is missing: $phrase"
+              exit 1
+            fi
+          done
+
+          # Every subcommand's own --help must exit 0 and identify itself.
+          assert_help() {
+            local label="$1"; shift
+            local out
+            out=$(timeout 1200 "$bin" "$@" --help)
+            if ! grep -qF "usage: insta-boards $label" <<<"$out"; then
+              echo "::error::unexpected --help output for 'insta-boards $label'"
+              echo "$out"
+              exit 1
+            fi
+          }
+          assert_help "sync" sync
+          assert_help "list" list
+          assert_help "list boards" list boards
+          assert_help "list items" list items
+          assert_help "download" download
+
+          echo "Smoke test passed."
+
+      - name: Upload binaries as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: insta-boards-binaries
+          path: dist/*
+          if-no-files-found: error
+
+      # Only attach to a Release when triggered by one (workflow_dispatch has
+      # no release to attach to).
+      - name: Attach binaries to the release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true

@@ -1,0 +1,37 @@
+# uvbox packaging configuration — wheel mode.
+#
+# What this produces
+# ------------------
+# uvbox does NOT freeze Python (unlike PyInstaller). It emits a small Go
+# launcher that, on FIRST RUN, bootstraps an embedded `uv`, downloads a
+# Python interpreter and installs `insta-boards` with `uv tool install`
+# into a per-app data dir — `$XDG_DATA_HOME/uvbox/<hash>/` on Linux/macOS
+# (default `~/.local/share/uvbox/<hash>/`) or `%LOCALAPPDATA%\uvbox\<hash>\`
+# on Windows. Subdirs: `uv/`, `tools/`, `tools-bin/`, `cache/`,
+# `configuration/` (no separate `python/`). It then execs the entry point.
+# At runtime the app is therefore a *normal, non-frozen* Python process
+# whose working directory is inherited from the shell — see
+# `docs/uvbox-packaging-audit.md`.
+#
+# Because the first run downloads uv + Python + dependencies, the resulting
+# binary is NOT an offline bundle: network access is required on first run.
+#
+# We build from a locally-built wheel (`uvbox wheel`) rather than from PyPI
+# (`uvbox pypi`) so CI does not depend on a published release.
+#
+# Build (all six targets are cross-compiled from a single runner:
+# darwin/linux/windows × amd64/arm64):
+#   uv build --wheel --out-dir .wheelhouse
+#   uvx uvbox wheel --config uvbox.toml .wheelhouse/insta_boards-*.whl
+
+[package]
+name = "insta-boards"
+# Entry point from `[project.scripts]` in pyproject.toml.
+script = "insta-boards"
+
+# Pin the embedded uv to the same version this repository is built and
+# tested with (uv 0.11.6), so the generated launchers are reproducible.
+# Note: `auto-update` is intentionally NOT enabled — there is no version
+# endpoint to poll, so the binaries must not try to check for updates.
+[uv]
+version = "0.11.6"
