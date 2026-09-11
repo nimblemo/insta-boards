@@ -39,9 +39,11 @@ last-sync timestamps.
 
 - [Requirements](#requirements)
 - [Installation](#installation)
+  - [Prebuilt binaries](#prebuilt-binaries)
 - [Quick start](#quick-start)
 - [Commands](#commands)
 - [Configuration](#configuration)
+  - [Where configuration is read from](#where-configuration-is-read-from)
   - [Authentication](#authentication)
   - [Network & HTTP retries](#network--http-retries)
   - [Parallel downloads](#parallel-downloads)
@@ -97,6 +99,47 @@ To install the project as a long-lived tool, use `uv tool`:
 uv tool install .                # installs the `insta-boards` binary
 insta-boards sync --dry-run      # available globally
 ```
+
+### Prebuilt binaries
+
+Every GitHub Release also ships self-bootstrapping launchers for all
+supported platforms, built with [`uvbox`](https://github.com/AmadeusITGroup/uvbox).
+Download the archive for your platform from the
+[Releases page](https://github.com/nimblemo/insta-boards/releases), unpack
+it, and run the `insta-boards` executable inside:
+
+| Platform              | Artifact                                 |
+| --------------------- | ---------------------------------------- |
+| Windows (x86_64)      | `insta-boards-x86_64-pc-windows-msvc.zip` |
+| Windows (ARM64)       | `insta-boards-aarch64-pc-windows-msvc.zip` |
+| Linux (x86_64)        | `insta-boards-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux (aarch64)       | `insta-boards-aarch64-unknown-linux-gnu.tar.gz` |
+| macOS (Intel)         | `insta-boards-x86_64-apple-darwin.tar.gz` |
+| macOS (Apple Silicon) | `insta-boards-aarch64-apple-darwin.tar.gz` |
+
+> **The first run requires network access.** These binaries are *not* a
+> frozen, offline bundle. On first launch the launcher downloads an embedded
+> `uv`, a Python interpreter and the package dependencies into
+> `$XDG_DATA_HOME/uvbox/<hash>/` (Linux/macOS; defaults to
+> `~/.local/share/uvbox/<hash>/`) or `%LOCALAPPDATA%\uvbox\<hash>\` (Windows),
+> then runs the app. That directory holds `uv/`, `tools/`, `tools-bin/`,
+> `cache/` and `configuration/` — there is no separate `python/` subdirectory
+> (the interpreter is managed by the embedded `uv`). Subsequent runs skip
+> straight to execution. Python does **not** need to be installed beforehand.
+
+Each binary also exposes a few `self` management subcommands:
+
+```bash
+insta-boards self update   # update the package to the latest version
+insta-boards self remove   # remove the installation and its venv
+insta-boards self path     # show where uvbox installed everything
+insta-boards self cache    # manage the download cache
+```
+
+Because the packaged app runs from `site-packages`, it has no "repo root":
+run it from (or `cd` into) the directory that should hold your `data/`,
+`secrets/` and `.env`, or pin the location with `IG_REPO_ROOT` (see
+[Configuration](#configuration)).
 
 For development, install in editable mode with all extras:
 
@@ -249,8 +292,36 @@ uvx --from . insta-boards download --collection 18427410172124759 --name "Furnit
 ## Configuration
 
 All configuration is read from environment variables (and optionally a
-`.env` file in the repo root, or the current working directory). Variables
-not set fall back to safe defaults.
+`.env` file). Variables not set fall back to safe defaults.
+
+### Where configuration is read from
+
+`.env` files are searched in this order (highest priority first):
+
+1. `<repo_root>/.env` — the source checkout, or the directory set by
+   `IG_REPO_ROOT`;
+2. `<cwd>/.env` — the current working directory, or the directory passed to
+   `--workdir`.
+
+Rules:
+
+- **Real environment variables always win.** A variable already set in the
+  process environment is never overridden by a `.env` file.
+- **An empty value counts as unset.** `KEY=` in a higher-priority file does
+  not mask a real value in a lower-priority file — the lower-priority value
+  (or a real environment variable) fills it in.
+- `<repo_root>/.env` has higher priority than `<cwd>/.env`: when a key is
+  present in both, the repo-root value wins.
+
+| Variable       | Purpose                                                                                 | Default             |
+| -------------- | --------------------------------------------------------------------------------------- | ------------------- |
+| `IG_REPO_ROOT` | Explicit project root (absolute or `~` path). Overrides source-checkout auto-detection. | current working dir |
+
+> **Packaged binaries have no "repo root".** The prebuilt launchers run from
+> `site-packages`, so paths that used to be repo-relative — `data/`,
+> `secrets/`, `sync-collection-list.txt` — resolve relative to the **current
+> working directory** (or `--workdir`). Run the binary from, or `cd` into,
+> the directory that should hold your data, or set `IG_REPO_ROOT` to pin it.
 
 ### Authentication
 
@@ -498,6 +569,12 @@ Releases are fully automated via GitHub Actions (`.github/workflows/`):
   pushes it to PyPI (or TestPyPI if you pick that target) using
   [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/)
   (OIDC). **No API tokens are stored in GitHub secrets.**
+- **`release-binaries.yml`** — runs on a published GitHub Release (and
+  manually via *Run workflow*). Builds the wheel into `.wheelhouse/`, uses
+  `uvbox` in wheel mode to cross-compile the self-bootstrapping launchers
+  for every platform, smoke-tests the Linux binary, uploads them as a
+  workflow artifact, and attaches them to the Release. Requires no secrets
+  (uses the default `GITHUB_TOKEN` with `contents: write`).
 
 ### One-time setup: register the trusted publisher on PyPI
 

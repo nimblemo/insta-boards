@@ -19,10 +19,13 @@ at home.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+from pathlib import Path
 from typing import Callable
 
 from src.cli._common import add_concurrency_args, add_workdir_arg
+from src.client import load_env
 
 
 # Description printed in ``insta-boards --help``.
@@ -185,8 +188,27 @@ def _resolve(dotted: str, attr: str) -> Callable[[argparse.Namespace], int]:
 
 def main(argv: list[str] | None = None) -> int:
     """Entry point declared in ``pyproject.toml`` under ``[project.scripts]``."""
+    # Load ``.env`` as the very first thing: the subcommands (and the
+    # humanizer / parallel configs they build) read the environment, so it
+    # must be populated before any handler runs. ``load_env`` is idempotent:
+    # it only fills keys that are missing (or empty) in the real environment
+    # (repo-root ``.env`` taking priority over the cwd / workdir ``.env``),
+    # so the second call inside ``init_client()`` is a harmless safety net
+    # for programmatic use.
+    load_env()
+
     parser = _build_parser()
     args = parser.parse_args(argv)
+
+    # ``--workdir`` changes the process working directory so that the data /
+    # secrets / state paths resolve there. Apply it before dispatch and
+    # re-run ``load_env`` so a ``.env`` living in the workdir is picked up
+    # too (variables already set in the real environment still win).
+    workdir = getattr(args, "workdir", None)
+    if workdir:
+        os.chdir(Path(workdir).expanduser().resolve())
+        load_env()
+
     handler: Callable[[argparse.Namespace], int] = args._handler
     try:
         return handler(args)

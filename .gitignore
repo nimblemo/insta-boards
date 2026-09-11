@@ -35,6 +35,10 @@ venv/
 dist/
 build/
 
+# Wheel output used by the release-binaries workflow (kept out of dist/ so it
+# is not mixed into the uploaded uvbox binaries)
+.wheelhouse/
+
 # Secrets / local data — never commit
 .env
 .env.*
@@ -54,3 +58,4 @@ sync-collection-list.txt
 .agents/
 .codex/
 .trae/
+.workbuddy-ai/

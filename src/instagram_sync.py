@@ -57,10 +57,35 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-DEFAULT_DOWNLOAD_TIMEOUT: int = _env_int("IG_DOWNLOAD_TIMEOUT", 120)
-DEFAULT_DOWNLOAD_DELAY: float = _env_float("IG_DOWNLOAD_DELAY", 1.0)
-DEFAULT_DOWNLOAD_RETRIES: int = _env_int("IG_DOWNLOAD_RETRIES", 5)
-DEFAULT_DOWNLOAD_BACKOFF: float = _env_float("IG_DOWNLOAD_BACKOFF", 0.5)
+# Runtime-tunable download knobs.
+#
+# These are exposed as *functions* rather than module-level constants on
+# purpose: this module is imported (via ``src.cli._common``) as soon as
+# ``src.cli.app`` loads — long before ``load_env()`` runs. Reading
+# ``os.environ`` at import time would therefore freeze the values before a
+# ``.env`` file has had a chance to populate them, silently ignoring every
+# ``IG_*`` override. Reading lazily at call time fixes that.
+
+
+def download_timeout() -> int:
+    """Per-request HTTP timeout in seconds (``IG_DOWNLOAD_TIMEOUT``)."""
+    return _env_int("IG_DOWNLOAD_TIMEOUT", 120)
+
+
+def download_delay() -> float:
+    """Minimum pause between downloads in seconds (``IG_DOWNLOAD_DELAY``)."""
+    return _env_float("IG_DOWNLOAD_DELAY", 1.0)
+
+
+def download_retries() -> int:
+    """Retry count for connect/read/status errors (``IG_DOWNLOAD_RETRIES``)."""
+    return _env_int("IG_DOWNLOAD_RETRIES", 5)
+
+
+def download_backoff() -> float:
+    """Exponential backoff factor between retries (``IG_DOWNLOAD_BACKOFF``)."""
+    return _env_float("IG_DOWNLOAD_BACKOFF", 0.5)
+
 
 _session_lock = threading.Lock()
 _shared_session: requests.Session | None = None
@@ -72,11 +97,11 @@ _shared_pacer: SessionPacer | None = None
 
 def _build_session() -> requests.Session:
     retries = Retry(
-        total=DEFAULT_DOWNLOAD_RETRIES,
-        connect=DEFAULT_DOWNLOAD_RETRIES,
-        read=DEFAULT_DOWNLOAD_RETRIES,
-        status=DEFAULT_DOWNLOAD_RETRIES,
-        backoff_factor=DEFAULT_DOWNLOAD_BACKOFF,
+        total=download_retries(),
+        connect=download_retries(),
+        read=download_retries(),
+        status=download_retries(),
+        backoff_factor=download_backoff(),
         status_forcelist=(408, 425, 429, 500, 502, 503, 504),
         allowed_methods=("HEAD", "GET", "OPTIONS"),
         raise_on_status=False,
@@ -98,14 +123,14 @@ def _get_session() -> requests.Session:
 
 
 def _throttle() -> None:
-    """Guarantee at least ``DEFAULT_DOWNLOAD_DELAY`` seconds between requests.
+    """Guarantee at least ``download_delay()`` seconds between requests.
 
     Kept for backwards compatibility (used by ``download_to_file`` as a
     "guaranteed minimum"). The real human-like throttling lives in
     ``SessionPacer`` and is called from ``DownloadPool``/CLI.
     """
     global _last_request_at
-    delay = max(0.0, DEFAULT_DOWNLOAD_DELAY)
+    delay = max(0.0, download_delay())
     if delay <= 0:
         return
     with _throttle_lock:
@@ -146,9 +171,11 @@ def reset_pacer() -> SessionPacer:
 
 def get_pool(pacer: SessionPacer | None = None) -> DownloadPool:
     """Return a ``DownloadPool`` with the concurrency limit from ``.env``."""
+    cfg = ParallelConfig()
     return DownloadPool(
         pacer=pacer or get_pacer(),
-        max_workers=ParallelConfig().max_workers,
+        max_workers=cfg.max_workers,
+        reuse_pool=cfg.reuse_pool,
     )
 
 
@@ -314,7 +341,7 @@ def download_to_file(url: str, target: Path) -> bool:
         return True
     target.parent.mkdir(parents=True, exist_ok=True)
     _throttle()
-    with _get_session().get(url, stream=True, timeout=DEFAULT_DOWNLOAD_TIMEOUT) as r:
+    with _get_session().get(url, stream=True, timeout=download_timeout()) as r:
         r.raise_for_status()
         with open(target, "wb") as f:
             for chunk in r.iter_content(chunk_size=1024 * 256):
